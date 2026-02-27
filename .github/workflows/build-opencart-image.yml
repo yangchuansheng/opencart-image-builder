@@ -1,0 +1,94 @@
+name: Build OpenCart image
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: "Source repository (owner/repo)"
+        required: true
+        default: "opencart/opencart"
+      source_tag:
+        description: "Source tag to build (e.g. 4.1.0.3 or v4.1.0.3)"
+        required: true
+      image_name:
+        description: "Image name under ghcr.io/<owner>/"
+        required: true
+        default: "opencart"
+      push_latest:
+        description: "Also push latest tag"
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout builder repository
+        uses: actions/checkout@v4
+
+      - name: Checkout OpenCart source by selected tag
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.source_repo }}
+          ref: ${{ inputs.source_tag }}
+          path: source
+          fetch-depth: 1
+
+      - name: Validate source layout
+        run: |
+          test -f source/upload/index.php
+          test -f source/upload/admin/index.php
+
+      - name: Normalize tag
+        id: vars
+        shell: bash
+        run: |
+          RAW_TAG="${{ inputs.source_tag }}"
+          CLEAN_TAG="${RAW_TAG#v}"
+          echo "raw_tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
+          echo "clean_tag=${CLEAN_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/${{ github.repository_owner }}/${{ inputs.image_name }}
+          tags: |
+            type=raw,value=${{ steps.vars.outputs.raw_tag }}
+            type=raw,value=${{ steps.vars.outputs.clean_tag }}
+            type=sha
+            type=raw,value=latest,enable=${{ inputs.push_latest }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            OPENCART_VERSION=${{ steps.vars.outputs.raw_tag }}
