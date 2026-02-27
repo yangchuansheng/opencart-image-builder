@@ -38,6 +38,8 @@ Build and publish OpenCart Docker images from upstream source tags.
 - `DB_DATABASE` (default `opencart`)
 - `DB_PORT` (default `3306`)
 - `DB_PREFIX` (default `oc_`)
+- `OPENCART_DB_WAIT_MAX_RETRIES` (default `60`)
+- `OPENCART_DB_WAIT_INTERVAL_SECONDS` (default `3`)
 
 ## Notes
 
