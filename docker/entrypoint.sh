@@ -28,12 +28,12 @@ wait_for_db() {
 
   while true; do
     if php -r '
+      mysqli_report(MYSQLI_REPORT_OFF);
       $host = getenv("DB_HOSTNAME") ?: "mysql";
       $user = getenv("DB_USERNAME") ?: "opencart";
       $pass = getenv("DB_PASSWORD") ?: "";
-      $db   = getenv("DB_DATABASE") ?: "opencart";
       $port = (int)(getenv("DB_PORT") ?: "3306");
-      $mysqli = @new mysqli($host, $user, $pass, $db, $port);
+      $mysqli = @new mysqli($host, $user, $pass, "", $port);
       if ($mysqli->connect_errno) { exit(1); }
       $mysqli->close();
       exit(0);
@@ -50,6 +50,34 @@ wait_for_db() {
 
     sleep "$interval"
   done
+}
+
+ensure_database() {
+  php -r '
+    mysqli_report(MYSQLI_REPORT_OFF);
+    $host = getenv("DB_HOSTNAME") ?: "mysql";
+    $user = getenv("DB_USERNAME") ?: "opencart";
+    $pass = getenv("DB_PASSWORD") ?: "";
+    $db   = getenv("DB_DATABASE") ?: "opencart";
+    $port = (int)(getenv("DB_PORT") ?: "3306");
+
+    $mysqli = @new mysqli($host, $user, $pass, "", $port);
+    if ($mysqli->connect_errno) {
+      fwrite(STDERR, "DB connect failed when creating database: " . $mysqli->connect_error . PHP_EOL);
+      exit(1);
+    }
+
+    $escaped = str_replace("`", "``", $db);
+    $sql = "CREATE DATABASE IF NOT EXISTS `{$escaped}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci";
+    if (!$mysqli->query($sql)) {
+      fwrite(STDERR, "CREATE DATABASE failed: " . $mysqli->error . PHP_EOL);
+      $mysqli->close();
+      exit(1);
+    }
+
+    $mysqli->close();
+    exit(0);
+  '
 }
 
 if [ -f config-dist.php ] && [ ! -f config.php ]; then
@@ -78,22 +106,26 @@ fix_dir_permissions system/storage/upload
 
 if [ "${OPENCART_AUTO_INSTALL}" = "true" ] && [ ! -f install.lock ] && [ -f install/cli_install.php ]; then
   if wait_for_db; then
-    if php install/cli_install.php install \
-      --username "${OPENCART_USERNAME}" \
-      --password "${OPENCART_PASSWORD}" \
-      --email "${OPENCART_ADMIN_EMAIL}" \
-      --http_server "${OPENCART_HTTP_SERVER}" \
-      --db_driver "${DB_DRIVER}" \
-      --db_hostname "${DB_HOSTNAME}" \
-      --db_username "${DB_USERNAME}" \
-      --db_password "${DB_PASSWORD}" \
-      --db_database "${DB_DATABASE}" \
-      --db_port "${DB_PORT}" \
-      --db_prefix "${DB_PREFIX}"; then
-      touch install.lock
-      echo "OpenCart auto installation completed."
+    if ensure_database; then
+      if php install/cli_install.php install \
+        --username "${OPENCART_USERNAME}" \
+        --password "${OPENCART_PASSWORD}" \
+        --email "${OPENCART_ADMIN_EMAIL}" \
+        --http_server "${OPENCART_HTTP_SERVER}" \
+        --db_driver "${DB_DRIVER}" \
+        --db_hostname "${DB_HOSTNAME}" \
+        --db_username "${DB_USERNAME}" \
+        --db_password "${DB_PASSWORD}" \
+        --db_database "${DB_DATABASE}" \
+        --db_port "${DB_PORT}" \
+        --db_prefix "${DB_PREFIX}"; then
+        touch install.lock
+        echo "OpenCart auto installation completed."
+      else
+        echo "OpenCart auto installation failed; installer UI remains available."
+      fi
     else
-      echo "OpenCart auto installation failed; installer UI remains available."
+      echo "Database creation/check failed; installer UI remains available."
     fi
   else
     echo "Skip auto installation because database is not reachable."
