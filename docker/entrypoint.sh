@@ -79,6 +79,7 @@ rewrite_admin_path_in_config() {
 
   escaped_admin=$(printf "%s" "${ADMIN_PATH}" | sed "s/[&]/\\\\&/g")
   sed -i "s|/admin/|/${escaped_admin}/|g" "${target}" || true
+  sed -i "s|'admin/'|'${escaped_admin}/'|g" "${target}" || true
   fix_file_permissions "${target}"
 }
 
