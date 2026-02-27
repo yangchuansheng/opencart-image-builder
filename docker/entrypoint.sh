@@ -3,6 +3,19 @@ set -eu
 
 cd /var/www/html
 
+STORAGE_PATH="${OPENCART_STORAGE_PATH:-/var/www/storage}"
+STORAGE_PATH="${STORAGE_PATH%/}"
+if [ -z "${STORAGE_PATH}" ]; then
+  STORAGE_PATH="/var/www/storage"
+fi
+
+ADMIN_PATH="${OPENCART_ADMIN_PATH:-admin}"
+case "${ADMIN_PATH}" in
+  *[!a-zA-Z0-9_-]*|"")
+    ADMIN_PATH="admin"
+    ;;
+esac
+
 fix_file_permissions() {
   target="$1"
   if [ -f "$target" ]; then
@@ -17,6 +30,81 @@ fix_dir_permissions() {
     chown -R www-data:www-data "$target" || true
     chmod -R u+rwX,g+rwX "$target" || true
   fi
+}
+
+configure_storage_layout() {
+  legacy_storage="/var/www/html/system/storage"
+
+  mkdir -p "${STORAGE_PATH}"
+
+  if [ -d "${legacy_storage}" ] && [ ! -L "${legacy_storage}" ]; then
+    if [ -z "$(ls -A "${STORAGE_PATH}" 2>/dev/null)" ]; then
+      cp -a "${legacy_storage}/." "${STORAGE_PATH}/" || true
+    fi
+    rm -rf "${legacy_storage}"
+  fi
+
+  if [ ! -L "${legacy_storage}" ]; then
+    ln -s "${STORAGE_PATH}" "${legacy_storage}"
+  fi
+
+  mkdir -p "${STORAGE_PATH}/cache"
+  mkdir -p "${STORAGE_PATH}/logs"
+  mkdir -p "${STORAGE_PATH}/download"
+  mkdir -p "${STORAGE_PATH}/upload"
+  mkdir -p "${STORAGE_PATH}/modification"
+  mkdir -p "${STORAGE_PATH}/session"
+  mkdir -p "${STORAGE_PATH}/marketplace"
+  mkdir -p "${STORAGE_PATH}/backups"
+
+  fix_dir_permissions "${STORAGE_PATH}"
+}
+
+rewrite_storage_path_in_config() {
+  target="$1"
+  if [ ! -f "${target}" ]; then
+    return 0
+  fi
+
+  escaped_storage=$(printf "%s" "${STORAGE_PATH}/" | sed "s/[&]/\\\\&/g")
+  sed -i "s|define('DIR_STORAGE', .*);|define('DIR_STORAGE', '${escaped_storage}');|g" "${target}" || true
+  fix_file_permissions "${target}"
+}
+
+rewrite_admin_path_in_config() {
+  target="$1"
+  if [ ! -f "${target}" ]; then
+    return 0
+  fi
+
+  escaped_admin=$(printf "%s" "${ADMIN_PATH}" | sed "s/[&]/\\\\&/g")
+  sed -i "s|/admin/|/${escaped_admin}/|g" "${target}" || true
+  fix_file_permissions "${target}"
+}
+
+apply_admin_directory_move() {
+  if [ "${ADMIN_PATH}" = "admin" ]; then
+    return 0
+  fi
+
+  if [ ! -f install.lock ]; then
+    return 0
+  fi
+
+  source_dir="/var/www/html/admin"
+  target_dir="/var/www/html/${ADMIN_PATH}"
+
+  if [ -d "${target_dir}" ]; then
+    :
+  elif [ -d "${source_dir}" ]; then
+    mv "${source_dir}" "${target_dir}"
+  else
+    return 0
+  fi
+
+  rewrite_admin_path_in_config "${target_dir}/config.php"
+  fix_dir_permissions "${target_dir}"
+  echo "OpenCart admin directory set to: ${ADMIN_PATH}"
 }
 
 wait_for_db() {
@@ -92,17 +180,21 @@ if [ -f .htaccess.txt ] && [ ! -f .htaccess ]; then
   cp .htaccess.txt .htaccess
 fi
 
+configure_storage_layout
+rewrite_storage_path_in_config config.php
+rewrite_storage_path_in_config admin/config.php
+
 # OpenCart installer requires writable config files.
 fix_file_permissions config.php
 fix_file_permissions admin/config.php
 
 # Common writable runtime directories for installer and app runtime.
 fix_dir_permissions image
-fix_dir_permissions system/storage
-fix_dir_permissions system/storage/cache
-fix_dir_permissions system/storage/logs
-fix_dir_permissions system/storage/download
-fix_dir_permissions system/storage/upload
+fix_dir_permissions "${STORAGE_PATH}"
+fix_dir_permissions "${STORAGE_PATH}/cache"
+fix_dir_permissions "${STORAGE_PATH}/logs"
+fix_dir_permissions "${STORAGE_PATH}/download"
+fix_dir_permissions "${STORAGE_PATH}/upload"
 
 if [ "${OPENCART_AUTO_INSTALL}" = "true" ] && [ ! -f install.lock ] && [ -f install/cli_install.php ]; then
   if wait_for_db; then
@@ -120,6 +212,8 @@ if [ "${OPENCART_AUTO_INSTALL}" = "true" ] && [ ! -f install.lock ] && [ -f inst
         --db_port "${DB_PORT}" \
         --db_prefix "${DB_PREFIX}"; then
         touch install.lock
+        rewrite_storage_path_in_config config.php
+        rewrite_storage_path_in_config admin/config.php
         echo "OpenCart auto installation completed."
       else
         echo "OpenCart auto installation failed; installer UI remains available."
@@ -135,5 +229,7 @@ fi
 if [ "${OPENCART_REMOVE_INSTALLER}" = "true" ] && [ -f install.lock ] && [ -d install ]; then
   rm -rf install
 fi
+
+apply_admin_directory_move
 
 exec "$@"

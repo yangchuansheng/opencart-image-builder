@@ -27,6 +27,8 @@ Build and publish OpenCart Docker images from upstream source tags.
 
 - `OPENCART_AUTO_INSTALL` (default `false`)
 - `OPENCART_REMOVE_INSTALLER` (default `false`)
+- `OPENCART_STORAGE_PATH` (default `/var/www/storage`)
+- `OPENCART_ADMIN_PATH` (default `admincp`)
 - `OPENCART_USERNAME` (default `admin`)
 - `OPENCART_PASSWORD` (default `admin`)
 - `OPENCART_ADMIN_EMAIL` (default `admin@example.com`)
