@@ -18,13 +18,16 @@ RUN apt-get update \
 COPY source/upload/ /var/www/html/
 COPY docker/entrypoint.sh /usr/local/bin/opencart-entrypoint
 
-RUN chmod +x /usr/local/bin/opencart-entrypoint \
+RUN mkdir -p /usr/local/share/opencart/storage-seed \
+    && cp -a /var/www/html/system/storage/. /usr/local/share/opencart/storage-seed/ \
+    && chmod +x /usr/local/bin/opencart-entrypoint \
     && chown -R www-data:www-data /var/www/html
 
 ENV OPENCART_VERSION="${OPENCART_VERSION}"
 ENV OPENCART_AUTO_INSTALL=false
 ENV OPENCART_REMOVE_INSTALLER=false
 ENV OPENCART_STORAGE_PATH=/var/www/storage
+ENV OPENCART_STORAGE_SEED_PATH=/usr/local/share/opencart/storage-seed
 ENV OPENCART_ADMIN_PATH=admincp
 ENV OPENCART_USERNAME=admin
 ENV OPENCART_PASSWORD=admin

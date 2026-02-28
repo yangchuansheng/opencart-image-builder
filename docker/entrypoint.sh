@@ -9,6 +9,12 @@ if [ -z "${STORAGE_PATH}" ]; then
   STORAGE_PATH="/var/www/storage"
 fi
 
+STORAGE_SEED_PATH="${OPENCART_STORAGE_SEED_PATH:-/usr/local/share/opencart/storage-seed}"
+STORAGE_SEED_PATH="${STORAGE_SEED_PATH%/}"
+if [ -z "${STORAGE_SEED_PATH}" ]; then
+  STORAGE_SEED_PATH="/usr/local/share/opencart/storage-seed"
+fi
+
 ADMIN_PATH="${OPENCART_ADMIN_PATH:-admin}"
 case "${ADMIN_PATH}" in
   *[!a-zA-Z0-9_-]*|"")
@@ -35,28 +41,35 @@ fix_dir_permissions() {
 configure_storage_layout() {
   legacy_storage="/var/www/html/system/storage"
   storage_bootstrap_flag="${STORAGE_PATH}/.opencart-storage-bootstrap-complete"
+  bootstrap_source=""
 
   mkdir -p "${STORAGE_PATH}"
 
-  if [ -d "${legacy_storage}" ] && [ ! -L "${legacy_storage}" ]; then
-    # Bootstrap storage data once. Do not rely on directory emptiness:
-    # PVC roots may contain lost+found, which would otherwise skip vendor copy.
-    if [ ! -f "${storage_bootstrap_flag}" ]; then
-      cp -an "${legacy_storage}/." "${STORAGE_PATH}/" || true
-      touch "${storage_bootstrap_flag}" || true
-    fi
-
-    # Ensure Twig/autoload dependencies exist even for partially initialized PVCs.
-    if [ -d "${legacy_storage}/vendor" ] && [ ! -f "${STORAGE_PATH}/vendor/autoload.php" ]; then
-      mkdir -p "${STORAGE_PATH}/vendor"
-      cp -an "${legacy_storage}/vendor/." "${STORAGE_PATH}/vendor/" || true
-    fi
-
-    rm -rf "${legacy_storage}"
+  if [ -d "${STORAGE_SEED_PATH}" ]; then
+    bootstrap_source="${STORAGE_SEED_PATH}"
+  elif [ -d "${legacy_storage}" ] && [ ! -L "${legacy_storage}" ]; then
+    bootstrap_source="${legacy_storage}"
   fi
 
-  if [ ! -L "${legacy_storage}" ]; then
-    ln -s "${STORAGE_PATH}" "${legacy_storage}"
+  if [ -n "${bootstrap_source}" ] && [ ! -f "${storage_bootstrap_flag}" ]; then
+    # Bootstrap storage data once. Do not rely on directory emptiness:
+    # PVC roots may contain lost+found, which would otherwise skip vendor copy.
+    cp -an "${bootstrap_source}/." "${STORAGE_PATH}/" || true
+    touch "${storage_bootstrap_flag}" || true
+  fi
+
+  # Ensure Twig/autoload dependencies exist even for partially initialized PVCs.
+  if [ -n "${bootstrap_source}" ] && [ -d "${bootstrap_source}/vendor" ] && [ ! -f "${STORAGE_PATH}/vendor/autoload.php" ]; then
+    mkdir -p "${STORAGE_PATH}/vendor"
+    cp -an "${bootstrap_source}/vendor/." "${STORAGE_PATH}/vendor/" || true
+  fi
+
+  # Keep legacy storage path removed so OpenCart security cleanup actions
+  # never target the active storage volume through symlinks.
+  if [ -L "${legacy_storage}" ]; then
+    rm -f "${legacy_storage}" || true
+  elif [ -d "${legacy_storage}" ] && [ "${legacy_storage}" != "${STORAGE_PATH}" ]; then
+    rm -rf "${legacy_storage}" || true
   fi
 
   mkdir -p "${STORAGE_PATH}/cache"
