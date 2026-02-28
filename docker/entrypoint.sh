@@ -34,13 +34,24 @@ fix_dir_permissions() {
 
 configure_storage_layout() {
   legacy_storage="/var/www/html/system/storage"
+  storage_bootstrap_flag="${STORAGE_PATH}/.opencart-storage-bootstrap-complete"
 
   mkdir -p "${STORAGE_PATH}"
 
   if [ -d "${legacy_storage}" ] && [ ! -L "${legacy_storage}" ]; then
-    if [ -z "$(ls -A "${STORAGE_PATH}" 2>/dev/null)" ]; then
-      cp -a "${legacy_storage}/." "${STORAGE_PATH}/" || true
+    # Bootstrap storage data once. Do not rely on directory emptiness:
+    # PVC roots may contain lost+found, which would otherwise skip vendor copy.
+    if [ ! -f "${storage_bootstrap_flag}" ]; then
+      cp -an "${legacy_storage}/." "${STORAGE_PATH}/" || true
+      touch "${storage_bootstrap_flag}" || true
     fi
+
+    # Ensure Twig/autoload dependencies exist even for partially initialized PVCs.
+    if [ -d "${legacy_storage}/vendor" ] && [ ! -f "${STORAGE_PATH}/vendor/autoload.php" ]; then
+      mkdir -p "${STORAGE_PATH}/vendor"
+      cp -an "${legacy_storage}/vendor/." "${STORAGE_PATH}/vendor/" || true
+    fi
+
     rm -rf "${legacy_storage}"
   fi
 
